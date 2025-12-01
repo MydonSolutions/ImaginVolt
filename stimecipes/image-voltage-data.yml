@@ -1,0 +1,44 @@
+_include:
+  - (cultcargo)wsclean.yml
+  - (cultcargo)blri_corr.yml
+
+cabs:
+  uvh5-to-ms:
+    info: "Convert UVH5 files to Measurement Set format."
+    python: 
+    inputs:
+      uvh5-filepath:
+        dtype: File
+        info: "Path to the input UVH5 file."
+      output-ms-filepath:
+        dtype: File
+        info: "Path to the output Measurement Set file."
+        required: false
+
+image-voltage-data:
+  name: image-voltage-data
+  info: "Transform raw voltage data into interferometric images with WSClean"
+
+  inputs:
+    voltage-data:
+      type: File
+      info: "Raw voltage data to be imaged."
+      policies:
+          repeat: list
+          positional: true
+    telescope-info-filepath:
+      type: File
+      info: "Path to telescope information (YAML/TOML or BFR5['telinfo'])."
+
+  steps:
+    correlate:
+      info: "Correlate raw voltage data into visibilities using BLRI PyCorr."
+      cab: blri_pycorr
+      params:
+        input_filepaths: '{recipe.voltage-data}'
+    convert-uvh5-to-ms:
+      info: "Convert the correlated visibilities from UVH5 to Measurement Set format."
+      python: 
+      params:
+        uvh5-filepath: '{steps.correlate.output_uvh5}'
+

@@ -1,44 +1,84 @@
 _include:
-  - (cultcargo)wsclean.yml
-  - (cultcargo)blri_corr.yml
+  - (cultcargo):
+    - wsclean.yml
+    - blri_pycorr.yml
 
 cabs:
   uvh5-to-ms:
     info: "Convert UVH5 files to Measurement Set format."
-    python: 
+    flavour: python-code
+    command: |
+            from pyuvdata import UVData
+            myuv = myuv = UVData()
+            myuv.read(uvh5-filepath, fix_old_proj=False)
+            myuv.write_ms(output-ms-filepath)
     inputs:
       uvh5-filepath:
         dtype: File
         info: "Path to the input UVH5 file."
+    outputs:
       output-ms-filepath:
-        dtype: File
+        dtype: Path
         info: "Path to the output Measurement Set file."
         required: false
+        default: '{uvh5-filepath}.ms'
 
 image-voltage-data:
   name: image-voltage-data
   info: "Transform raw voltage data into interferometric images with WSClean"
 
-  inputs:
-    voltage-data:
-      type: File
-      info: "Raw voltage data to be imaged."
-      policies:
-          repeat: list
-          positional: true
+  aliases:
+    raw-input:
+    - correlate.input_filepaths
     telescope-info-filepath:
-      type: File
-      info: "Path to telescope information (YAML/TOML or BFR5['telinfo'])."
+    - correlate.telescope-info-filepath
+    upchannelisation-rate:
+    - correlate.upchannelisation-rate
+    integration-rate:
+    - correlate.integration-rate
+    polarisations:
+    - correlate.polarisations
+    frequency-mhz-begin:
+    - correlate.frequency-mhz-begin
+    frequency-mhz-end:
+    - correlate.frequency-mhz-end
+    frequency-selection-percentage:
+    - correlate.frequency-selection-percentage
+    frequency-selection-center:
+    - correlate.frequency-selection-center
+    cupy:
+    - correlate.cupy
+    dtype:
+    - correlate.dtype
+    unsorted-raw-filepaths:
+    - correlate.unsorted-raw-filepaths
+    invert-uvw-baselines:
+    - correlate.invert-uvw-baselines
+    invert-correlation-conjugation:
+    - correlate.invert-correlation-conjugation
+    stamp-index:
+    - correlate.stamp-index
+    stamp-timestep-increment:
+    - correlate.stamp-timestep-increment
+    output-filepath:
+    - correlate.output-filepath
+  
+  outputs:
+    output-ms:
+      info: Output filepath and name for the Measurement Set file written before imaging
+      dtype: Path
+      required: True
 
   steps:
     correlate:
       info: "Correlate raw voltage data into visibilities using BLRI PyCorr."
       cab: blri_pycorr
       params:
-        input_filepaths: '{recipe.voltage-data}'
+        input_filepaths: '{recipe.raw-input}'
     convert-uvh5-to-ms:
       info: "Convert the correlated visibilities from UVH5 to Measurement Set format."
-      python: 
+      cab: uvh5-to-ms
       params:
-        uvh5-filepath: '{steps.correlate.output_uvh5}'
+        uvh5-filepath: '{steps.correlate.output-filepath}'
+        output-ms-filepath: '{recipe.output-ms}'
 

@@ -7,21 +7,22 @@ cabs:
   uvh5-to-ms:
     info: "Convert UVH5 files to Measurement Set format."
     flavour: python-code
+    image:
+      _use: vars.cult-cargo.images
+      name: blri_pycorr
     command: |
             from pyuvdata import UVData
-            myuv = myuv = UVData()
-            myuv.read(uvh5-filepath, fix_old_proj=False)
-            myuv.write_ms(output-ms-filepath)
+            myuv = UVData()
+            myuv.read(uvh5_filepath, fix_old_proj=False)
+            myuv.write_ms(output_ms_filepath)
     inputs:
-      uvh5-filepath:
-        dtype: File
-        info: "Path to the input UVH5 file."
-    outputs:
-      output-ms-filepath:
+      uvh5_filepath:
         dtype: Path
+        info: "Path to the input UVH5 file."
+      output_ms_filepath:
+        dtype: MS
         info: "Path to the output Measurement Set file."
-        required: false
-        default: '{uvh5-filepath}.ms'
+        required: true
 
 image-voltage-data:
   name: image-voltage-data
@@ -73,12 +74,11 @@ image-voltage-data:
     correlate:
       info: "Correlate raw voltage data into visibilities using BLRI PyCorr."
       cab: blri_pycorr
-      params:
-        input_filepaths: '{recipe.raw-input}'
+
     convert-uvh5-to-ms:
       info: "Convert the correlated visibilities from UVH5 to Measurement Set format."
       cab: uvh5-to-ms
       params:
-        uvh5-filepath: '{steps.correlate.output-filepath}'
-        output-ms-filepath: '{recipe.output-ms}'
+        uvh5_filepath: '{steps.correlate.output-filepath}'
+        output_ms_filepath: '{recipe.output-ms}'
 

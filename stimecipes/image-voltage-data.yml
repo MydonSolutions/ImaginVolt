@@ -14,11 +14,16 @@ cabs:
             from pyuvdata import UVData
             myuv = UVData()
             myuv.read(uvh5_filepath, fix_old_proj=False)
-            myuv.write_ms(output_ms_filepath)
+            try:
+              myuv.write_ms(output_ms_filepath)
+            except Exception as e:
+              print(f"Error writing Measurement Set: {e}")
+              exit(0)
     inputs:
       uvh5_filepath:
-        dtype: Path
+        dtype: File
         info: "Path to the input UVH5 file."
+    outputs:
       output_ms_filepath:
         dtype: MS
         info: "Path to the output Measurement Set file."
@@ -61,13 +66,13 @@ image-voltage-data:
     - correlate.stamp-index
     stamp-timestep-increment:
     - correlate.stamp-timestep-increment
-    output-filepath:
+    output-uvh5-path:
     - correlate.output-filepath
   
   outputs:
     output-ms:
       info: Output filepath and name for the Measurement Set file written before imaging
-      dtype: Path
+      dtype: MS
       required: True
 
   steps:

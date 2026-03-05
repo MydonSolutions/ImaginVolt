@@ -68,6 +68,16 @@ image-voltage-data:
     - correlate.stamp-timestep-increment
     output-uvh5-path:
     - correlate.output-filepath
+    column:
+    - imaging.column
+    niter:
+    - imaging.niter
+    - size:
+    - imaging.size
+    - scale:
+    - imaging.scale
+    -prefix:
+    - imaging.prefix
   
   outputs:
     output-ms:
@@ -86,4 +96,11 @@ image-voltage-data:
       params:
         uvh5_filepath: '{steps.correlate.output-filepath}'
         output_ms_filepath: '{recipe.output-ms}'
+
+    imaging:
+      info: "Image the Measurement Set using WSClean."
+      cab: wsclean
+      params:
+        ms: '{steps.convert-uvh5-to-ms.output_ms_filepath}'
+        
 

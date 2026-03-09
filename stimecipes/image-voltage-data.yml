@@ -33,9 +33,23 @@ image-voltage-data:
   name: image-voltage-data
   info: "Transform raw voltage data into interferometric images with WSClean"
 
+  inputs:
+    raw-inputs:
+      info: The path(s) to the input raw voltage data files (e.g. GUPPI RAW file stem or all filepaths; Seticore Stamps filepath)
+      dtype: List[str]
+      policies:
+          repeat: list
+          positional: true
+    stamp-indices:
+      info: The selective index of a stamp within a '.stamps' file. Only applicable when `raw-input` is a Seticore Stamps filepath
+      dtype: List[int]
+      default: [0]
+      required: false
+      policies:
+          repeat: list
+          positional: true
+
   aliases:
-    raw-input:
-    - correlate.input_filepaths
     telescope-info-filepath:
     - correlate.telescope-info-filepath
     upchannelisation-rate:
@@ -62,8 +76,6 @@ image-voltage-data:
     - correlate.invert-uvw-baselines
     invert-correlation-conjugation:
     - correlate.invert-correlation-conjugation
-    stamp-index:
-    - correlate.stamp-index
     stamp-timestep-increment:
     - correlate.stamp-timestep-increment
     output-uvh5-path:
@@ -72,15 +84,20 @@ image-voltage-data:
     - imaging.column
     niter:
     - imaging.niter
-    - size:
+    size:
     - imaging.size
-    - scale:
+    scale:
     - imaging.scale
-    -prefix:
+    prefix:
     - imaging.prefix
+
+  for_loop:
+    var: raw_filepath
+    over: raw-inputs
+    scatter: 4
   
   outputs:
-    output-ms:
+    output-ms-path:
       info: Output filepath and name for the Measurement Set file written before imaging
       dtype: MS
       required: True
@@ -89,13 +106,16 @@ image-voltage-data:
     correlate:
       info: "Correlate raw voltage data into visibilities using BLRI PyCorr."
       cab: blri_pycorr
+      params:
+        input_filepaths: =recipe.raw_filepath
+        stamp-index: =recipe.stamp-indices[recipe.raw_filepath@index]
 
     convert-uvh5-to-ms:
       info: "Convert the correlated visibilities from UVH5 to Measurement Set format."
       cab: uvh5-to-ms
       params:
         uvh5_filepath: '{steps.correlate.output-filepath}'
-        output_ms_filepath: '{recipe.output-ms}'
+        output_ms_filepath: '{recipe.output-ms-path}'
 
     imaging:
       info: "Image the Measurement Set using WSClean."

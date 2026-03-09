@@ -29,6 +29,73 @@ cabs:
         info: "Path to the output Measurement Set file."
         required: true
 
+  stack_freq_cube:
+    info: "Stack WSClean per-band 2D images into a 3D FITS cube and delete the 2D files"
+    flavour: python-code
+    image:
+      # Use the pre-existing cult-cargo Python astronomy image
+      _use: vars.cult-cargo.images
+      name: python-astro
+    command: |
+      import os
+      import numpy as np
+      from astropy.io import fits
+
+      if not images:
+          print("No images provided to stack!")
+          exit(0)
+
+      # Ensure chronological frequency ordering (e.g. 0000, 0001)
+      images = sorted(images)
+      print(f"Stacking {len(images)} frequency channels into {cube}...")
+
+      data_list = []
+      hdr = fits.open(images[0])[0].header.copy()
+      ch0_freq = hdr.get("CRVAL3", 0.0)
+      
+      # Determine bandwidth strictly from 0 to 1
+      ch1_freq = ch0_freq
+      if len(images) > 1:
+          ch1_freq = fits.open(images[1])[0].header.get("CRVAL3", 0.0)
+
+      # Read all data blocks
+      for img in images:
+          with fits.open(img) as f:
+              data_list.append(f[0].data)
+
+      # WSClean multi-chan 2D shape is typically (1, 1, DEC, RA). 
+      # Stacking along axis 1 makes it a standard cube: (1, NCHAN, DEC, RA)
+      if len(data_list[0].shape) == 4:
+          combined = np.concatenate(data_list, axis=1)
+      else:
+          combined = np.stack(data_list, axis=0) # Fallback
+          
+      # Update FITS header to denote true 3D/4D setup
+      hdr['NAXIS3'] = len(images)
+      if len(images) > 1:
+          hdr['CDELT3'] = ch1_freq - ch0_freq
+
+      fits.writeto(cube, combined, hdr, overwrite=True)
+      print(f"Cube successfully written to: {cube}")
+
+      print("Cleaning up individual 2D slice images...")
+      for img in images:
+          os.remove(img)
+
+    inputs:
+      images:
+        dtype: List[File]
+        info: "List of 2D target FITS channel slices"
+        required: true
+      cube:
+        dtype: str
+        info: "Output path for the FITS cube"
+        required: true
+    outputs:
+      out_cube: # Register the created file for Stimela
+        implicit: =current.cube
+        dtype: File
+
 image-voltage-data:
   name: image-voltage-data
   info: "Transform raw voltage data into interferometric images with WSClean"
@@ -134,5 +201,19 @@ image-voltage-data:
         ms: =recipe.out_ms
         prefix: =recipe.img_prefix
         multi.chan: true
+
+    stacking-image:
+      info: "Stack restored 2D channel slices into 3D cube"
+      cab: stack_freq_cube
+      params:
+        images: =steps.imaging.restored.per-band
+        cube: =recipe.img_prefix + "-image-cube.fits"
+
+    stacking-dirty:
+      info: "Stack dirty 2D channel slices into 3D cube"
+      cab: stack_freq_cube
+      params:
+        images: =steps.imaging.dirty.per-band
+        cube: =recipe.img_prefix + "-dirty-cube.fits"
         
 

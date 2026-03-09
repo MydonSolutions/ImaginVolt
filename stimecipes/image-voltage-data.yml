@@ -49,6 +49,12 @@ image-voltage-data:
           repeat: list
           positional: true
 
+  outputs:
+    outdir:
+      info: The directory to which all output will be written
+      dtype: Directory
+      required: true
+
   aliases:
     telescope-info-filepath:
     - correlate.telescope-info-filepath
@@ -78,8 +84,6 @@ image-voltage-data:
     - correlate.invert-correlation-conjugation
     stamp-timestep-increment:
     - correlate.stamp-timestep-increment
-    output-uvh5-path:
-    - correlate.output-filepath
     column:
     - imaging.column
     niter:
@@ -88,19 +92,24 @@ image-voltage-data:
     - imaging.size
     scale:
     - imaging.scale
-    prefix:
-    - imaging.prefix
+    nchan:
+    - imaging.nchan
+    join-channels:
+    - imaging.join-channels
 
   for_loop:
     var: raw_filepath
     over: raw-inputs
     scatter: 4
-  
-  outputs:
-    output-ms-path:
-      info: Output filepath and name for the Measurement Set file written before imaging
-      dtype: MS
-      required: True
+
+  assign:
+    # Get filename without the path and drop the .stamps extension
+    base_name: =STRIPEXT(BASENAME(recipe.raw_filepath))
+    # filenames are unique depending on stamp-index so that we can process the same raw file many times
+    unique_name: '{recipe.base_name}_idx{recipe.raw_filepath@index}'
+    out_uvh5:    '{recipe.outdir}/{recipe.unique_name}.uvh5'
+    out_ms:      '{recipe.outdir}/{recipe.unique_name}.ms'
+    img_prefix:  '{recipe.outdir}/{recipe.unique_name}'
 
   steps:
     correlate:
@@ -109,18 +118,21 @@ image-voltage-data:
       params:
         input_filepaths: =recipe.raw_filepath
         stamp-index: =recipe.stamp-indices[recipe.raw_filepath@index]
+        output-filepath: =recipe.out_uvh5
 
     convert-uvh5-to-ms:
       info: "Convert the correlated visibilities from UVH5 to Measurement Set format."
       cab: uvh5-to-ms
       params:
-        uvh5_filepath: '{steps.correlate.output-filepath}'
-        output_ms_filepath: '{recipe.output-ms-path}'
+        uvh5_filepath: =recipe.out_uvh5
+        output_ms_filepath: =recipe.out_ms
 
     imaging:
       info: "Image the Measurement Set using WSClean."
       cab: wsclean
       params:
-        ms: '{steps.convert-uvh5-to-ms.output_ms_filepath}'
+        ms: =recipe.out_ms
+        prefix: =recipe.img_prefix
+        multi.chan: true
         
 

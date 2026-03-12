@@ -4,6 +4,98 @@ _include:
     - blri_pycorr.yml
 
 cabs:
+  dedrift-stamps:
+    info: "Dedrift complex voltage stamp files natively via capnp."
+    flavour: python-code
+    image:
+      _use: vars.cult-cargo.images
+      name: blri_pycorr
+    command: |
+      import capnp
+      import numpy as np
+      from seticore import stamp_capnp
+
+      print(f"Reading stamp index {stamp_index} from {stamp_filepath}")
+      with open(stamp_filepath, 'rb') as f:
+          # Use traversal limit to avoid capnp memory errors on large files
+          stamps = stamp_capnp.Stamp.read_multiple(f, traversal_limit_in_words=2**30)
+          target_stamp = None
+          for i, s in enumerate(stamps):
+              if i == stamp_index:
+                  target_stamp = s
+                  break
+          if target_stamp is None:
+              raise IndexError(f"Stamp index {stamp_index} not found.")
+
+      nt = target_stamp.numTimesteps
+      nc = target_stamp.numChannels
+      npols = target_stamp.numPolarizations
+      nants = target_stamp.numAntennas
+      
+      print(f"Original shape: {(nt, nc, npols, nants, 2)}")
+      data = np.array(target_stamp.data).reshape((nt, nc, npols, nants, 2))
+
+      df = abs(target_stamp.foff) * 1e6 # Hz
+      dt = target_stamp.tsamp # seconds
+
+      # Pass-through if no dedrifting is needed
+      if drift_rate == 0.0:
+          print("Drift rate is 0, saving unchanged.")
+          with open(out_stamp_filepath, 'wb') as f:
+              target_stamp.as_builder().write(f)
+          exit(0)
+
+      # Calculate dedrift parameters equivalent to setigen.dedrift
+      max_offset = int(np.round(abs(drift_rate) * nt * dt / df))
+      new_nc = nc - max_offset
+
+      if new_nc <= 0:
+          raise ValueError(f"Drift rate {drift_rate} Hz/s obliterates all {nc} channels.")
+
+      print(f"Dedrifting frame. Max offset: {max_offset} channels. New channels: {new_nc}")
+      new_data = np.zeros((nt, new_nc, npols, nants, 2), dtype=np.float32)
+
+      for i in range(nt):
+          offset = int(np.round(abs(drift_rate) * i * dt / df))
+          if drift_rate >= 0:
+              start_idx = offset
+              end_idx = start_idx + new_nc
+          else:
+              end_idx = nc - offset
+              start_idx = end_idx - new_nc
+          new_data[i] = data[i, start_idx:end_idx, :, :, :]
+
+      new_stamp = target_stamp.as_builder()
+      new_stamp.numChannels = new_nc
+      
+      if target_stamp.foff > 0: # Ascending frequency
+          if drift_rate < 0:
+              new_stamp.fch1 = target_stamp.fch1 + max_offset * target_stamp.foff
+      else:
+          if drift_rate >= 0:
+              new_stamp.fch1 = target_stamp.fch1 + max_offset * target_stamp.foff
+
+      new_stamp.data = new_data.flatten().tolist()
+
+      with open(out_stamp_filepath, 'wb') as f:
+          new_stamp.write(f)
+      print(f"Saved dedrifted stamp to {out_stamp_filepath}")
+    inputs:
+      stamp_filepath:
+        dtype: File
+        info: "Path to the input stamp file."
+      stamp_index:
+        dtype: int
+        info: "The stamp index to process."
+      drift_rate:
+        dtype: float
+        info: "Drift rate to apply in Hz/s."
+    outputs:
+      out_stamp_filepath:
+        dtype: File
+        info: "Path to the output dedrifted file."
+        required: true
+
   uvh5-to-ms:
     info: "Convert UVH5 files to Measurement Set format."
     flavour: python-code
@@ -33,7 +125,6 @@ cabs:
     info: "Stack WSClean per-band 2D images into a 3D FITS cube and delete the 2D files"
     flavour: python-code
     image:
-      # Use the pre-existing cult-cargo Python astronomy image
       _use: vars.cult-cargo.images
       name: python-astro
     command: |
@@ -45,7 +136,6 @@ cabs:
           print("No images provided to stack!")
           exit(0)
 
-      # Ensure chronological frequency ordering (e.g. 0000, 0001)
       images = sorted(images)
       print(f"Stacking {len(images)} frequency channels into {cube}...")
 
@@ -53,24 +143,19 @@ cabs:
       hdr = fits.open(images[0])[0].header.copy()
       ch0_freq = hdr.get("CRVAL3", 0.0)
       
-      # Determine bandwidth strictly from 0 to 1
       ch1_freq = ch0_freq
       if len(images) > 1:
           ch1_freq = fits.open(images[1])[0].header.get("CRVAL3", 0.0)
 
-      # Read all data blocks
       for img in images:
           with fits.open(img) as f:
               data_list.append(f[0].data)
 
-      # WSClean multi-chan 2D shape is typically (1, 1, DEC, RA). 
-      # Stacking along axis 1 makes it a standard cube: (1, NCHAN, DEC, RA)
       if len(data_list[0].shape) == 4:
           combined = np.concatenate(data_list, axis=1)
       else:
-          combined = np.stack(data_list, axis=0) # Fallback
+          combined = np.stack(data_list, axis=0) 
           
-      # Update FITS header to denote true 3D/4D setup
       hdr['NAXIS3'] = len(images)
       if len(images) > 1:
           hdr['CDELT3'] = ch1_freq - ch0_freq
@@ -78,7 +163,6 @@ cabs:
       fits.writeto(cube, combined, hdr, overwrite=True)
       print(f"Cube successfully written to: {cube}")
 
-      print("Cleaning up individual 2D slice images...")
       for img in images:
           os.remove(img)
 
@@ -92,7 +176,7 @@ cabs:
         info: "Output path for the FITS cube"
         required: true
     outputs:
-      out_cube: # Register the created file for Stimela
+      out_cube: 
         implicit: =current.cube
         dtype: File
 
@@ -102,15 +186,23 @@ image-voltage-data:
 
   inputs:
     raw-inputs:
-      info: The path(s) to the input raw voltage data files (e.g. GUPPI RAW file stem or all filepaths; Seticore Stamps filepath)
+      info: The path(s) to the input raw voltage data files
       dtype: List[str]
       policies:
           repeat: list
           positional: true
     stamp-indices:
-      info: The selective index of a stamp within a '.stamps' file. Only applicable when `raw-input` is a Seticore Stamps filepath
+      info: The selective index of a stamp within a '.stamps' file.
       dtype: List[int]
       default: [0]
+      required: false
+      policies:
+          repeat: list
+          positional: true
+    drift-rates:
+      info: The drift rates (Hz/s) corresponding to each stamp file for de-drifting.
+      dtype: List[float]
+      default: [0.0]
       required: false
       policies:
           repeat: list
@@ -170,21 +262,29 @@ image-voltage-data:
     scatter: 4
 
   assign:
-    # Get filename without the path and drop the .stamps extension
     base_name: =STRIPEXT(BASENAME(recipe.raw_filepath))
-    # filenames are unique depending on stamp-index so that we can process the same raw file many times
     unique_name: '{recipe.base_name}_idx{recipe.raw_filepath@index}'
+    out_dedrifted: '{recipe.outdir}/{recipe.unique_name}_dedrifted.stamps'
     out_uvh5:    '{recipe.outdir}/{recipe.unique_name}.uvh5'
     out_ms:      '{recipe.outdir}/{recipe.unique_name}.ms'
     img_prefix:  '{recipe.outdir}/{recipe.unique_name}'
 
   steps:
+    dedrift:
+      info: "Dedrift the initial stamp files."
+      cab: dedrift-stamps
+      params:
+        stamp_filepath: =recipe.raw_filepath
+        stamp_index: =recipe.stamp-indices[recipe.raw_filepath@index]
+        drift_rate: =recipe.drift-rates[recipe.raw_filepath@index]
+        out_stamp_filepath: =recipe.out_dedrifted
+
     correlate:
       info: "Correlate raw voltage data into visibilities using BLRI PyCorr."
       cab: blri_pycorr
       params:
-        input_filepaths: =recipe.raw_filepath
-        stamp-index: =recipe.stamp-indices[recipe.raw_filepath@index]
+        input_filepaths: =recipe.out_dedrifted
+        stamp-index: 0 # Using 0 since the dedrift cab extracts our target into a new single-stamp file
         output-filepath: =recipe.out_uvh5
 
     convert-uvh5-to-ms:
@@ -236,8 +336,3 @@ image-voltage-data:
       params:
         images: =GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-model.fits")
         cube: =recipe.img_prefix + "-model-cube.fits"
-
-    
-
-        
-

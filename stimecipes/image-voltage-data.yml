@@ -4,6 +4,36 @@ _include:
     - blri_pycorr.yml
 
 cabs:
+  get-ms-nchan:
+    info: "Determine the number of channels in a Measurement Set or pass through a user-defined value."
+    flavour: python-code
+    image:
+      _use: vars.cult-cargo.images
+      name: blri_pycorr
+    command: |
+      from casacore.tables import table
+      
+      # If user provided a non-zero nchan, use it. 
+      # Otherwise (if 0), inspect the MS.
+      if user_nchan > 0:
+          final_nchan = user_nchan
+          print(f"Using user-specified nchan: {final_nchan}")
+      else:
+          with table(ms_path + '/SPECTRAL_WINDOW', ack=False) as t:
+              final_nchan = int(t.getcol('NUM_CHAN')[0])
+          print(f"Detected {final_nchan} channels in {ms_path}")
+      
+    inputs:
+      ms_path:
+        dtype: Directory
+        info: "Path to the Measurement Set."
+      user_nchan:
+        dtype: int
+        info: "The nchan value from the recipe input."
+    outputs:
+      final_nchan:
+        dtype: int
+
   dedrift-stamps:
     info: "Dedrift complex voltage stamp files natively via capnp."
     flavour: python-code
@@ -207,6 +237,11 @@ image-voltage-data:
       policies:
           repeat: list
           positional: true
+    nchan:
+      info: The number of channels to image. If 0, the recipe will image every channel in the MS
+      dtype: int
+      default: 1
+      required: false
 
   outputs:
     outdir:
@@ -251,8 +286,6 @@ image-voltage-data:
     - imaging.size
     scale:
     - imaging.scale
-    nchan:
-    - imaging.nchan
     join-channels:
     - imaging.join-channels
 
@@ -294,12 +327,21 @@ image-voltage-data:
         uvh5_filepath: =recipe.out_uvh5
         output_ms_filepath: =recipe.out_ms
 
+    #have to determine this for each run since stamps are arbitrarily sliced
+    get-nchan:
+      info: "Resolve total channel count for imaging."
+      cab: get-ms-nchan
+      params:
+        ms_path: =recipe.out_ms
+        user_nchan: =recipe.nchan
+
     imaging:
       info: "Image the Measurement Set using WSClean."
       cab: wsclean
       params:
         ms: =recipe.out_ms
         prefix: =recipe.img_prefix
+        nchan: =steps.get-nchan.final_nchan
         multi.chan: true
 
     stacking-image:

@@ -200,7 +200,7 @@ cabs:
       images:
         dtype: List[File]
         info: "List of 2D target FITS channel slices"
-        required: true
+        required: false
       cube:
         dtype: str
         info: "Output path for the FITS cube"
@@ -296,7 +296,8 @@ image-voltage-data:
 
   assign:
     base_name: =STRIPEXT(BASENAME(recipe.raw_filepath))
-    unique_name: '{recipe.base_name}_idx{recipe.raw_filepath@index}'
+    stamp_index_val: =recipe.stamp-indices[recipe.raw_filepath@index]
+    unique_name: '{recipe.base_name}_idx{recipe.stamp_index_val}'
     out_dedrifted: '{recipe.outdir}/{recipe.unique_name}_dedrifted.stamps'
     out_uvh5:    '{recipe.outdir}/{recipe.unique_name}.uvh5'
     out_ms:      '{recipe.outdir}/{recipe.unique_name}.ms'
@@ -361,6 +362,7 @@ image-voltage-data:
     stacking-residual:
       info: "Stack residual 2D channel slices into 3D cube"
       cab: stack_freq_cube
+      skip: =IF(LEN(GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-residual.fits"))==0, true, false)
       params:
         images: =GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-residual.fits")
         cube: =recipe.img_prefix + "-residual-cube.fits"
@@ -368,6 +370,7 @@ image-voltage-data:
     stacking-psf:
       info: "Stack PSF 2D channel slices into 3D cube"
       cab: stack_freq_cube
+      skip: =IF(LEN(GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-psf.fits"))==0, true, false)
       params:
         images: =GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-psf.fits")
         cube: =recipe.img_prefix + "-psf-cube.fits"
@@ -375,6 +378,7 @@ image-voltage-data:
     stacking-model:
       info: "Stack model 2D channel slices into 3D cube"
       cab: stack_freq_cube
+      skip: =IF(LEN(GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-model.fits"))==0, true, false)
       params:
         images: =GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-model.fits")
         cube: =recipe.img_prefix + "-model-cube.fits"

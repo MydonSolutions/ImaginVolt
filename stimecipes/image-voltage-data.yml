@@ -34,98 +34,6 @@ cabs:
       final_nchan:
         dtype: int
 
-  dedrift-stamps:
-    info: "Dedrift complex voltage stamp files natively via capnp."
-    flavour: python-code
-    image:
-      _use: vars.cult-cargo.images
-      name: blri_pycorr
-    command: |
-      import capnp
-      import numpy as np
-      from seticore import stamp_capnp
-
-      print(f"Reading stamp index {stamp_index} from {stamp_filepath}")
-      with open(stamp_filepath, 'rb') as f:
-          # Use traversal limit to avoid capnp memory errors on large files
-          stamps = stamp_capnp.Stamp.read_multiple(f, traversal_limit_in_words=2**30)
-          target_stamp = None
-          for i, s in enumerate(stamps):
-              if i == stamp_index:
-                  target_stamp = s
-                  break
-          if target_stamp is None:
-              raise IndexError(f"Stamp index {stamp_index} not found.")
-
-      nt = target_stamp.numTimesteps
-      nc = target_stamp.numChannels
-      npols = target_stamp.numPolarizations
-      nants = target_stamp.numAntennas
-      
-      print(f"Original shape: {(nt, nc, npols, nants, 2)}")
-      data = np.array(target_stamp.data).reshape((nt, nc, npols, nants, 2))
-
-      df = abs(target_stamp.foff) * 1e6 # Hz
-      dt = target_stamp.tsamp # seconds
-
-      # Pass-through if no dedrifting is needed
-      if drift_rate == 0.0:
-          print("Drift rate is 0, saving unchanged.")
-          with open(out_stamp_filepath, 'wb') as f:
-              target_stamp.as_builder().write(f)
-          exit(0)
-
-      # Calculate dedrift parameters equivalent to setigen.dedrift
-      max_offset = int(np.round(abs(drift_rate) * nt * dt / df))
-      new_nc = nc - max_offset
-
-      if new_nc <= 0:
-          raise ValueError(f"Drift rate {drift_rate} Hz/s obliterates all {nc} channels.")
-
-      print(f"Dedrifting frame. Max offset: {max_offset} channels. New channels: {new_nc}")
-      new_data = np.zeros((nt, new_nc, npols, nants, 2), dtype=np.float32)
-
-      for i in range(nt):
-          offset = int(np.round(abs(drift_rate) * i * dt / df))
-          if drift_rate >= 0:
-              start_idx = offset
-              end_idx = start_idx + new_nc
-          else:
-              end_idx = nc - offset
-              start_idx = end_idx - new_nc
-          new_data[i] = data[i, start_idx:end_idx, :, :, :]
-
-      new_stamp = target_stamp.as_builder()
-      new_stamp.numChannels = new_nc
-      
-      if target_stamp.foff > 0: # Ascending frequency
-          if drift_rate < 0:
-              new_stamp.fch1 = target_stamp.fch1 + max_offset * target_stamp.foff
-      else:
-          if drift_rate >= 0:
-              new_stamp.fch1 = target_stamp.fch1 + max_offset * target_stamp.foff
-
-      new_stamp.data = new_data.flatten().tolist()
-
-      with open(out_stamp_filepath, 'wb') as f:
-          new_stamp.write(f)
-      print(f"Saved dedrifted stamp to {out_stamp_filepath}")
-    inputs:
-      stamp_filepath:
-        dtype: File
-        info: "Path to the input stamp file."
-      stamp_index:
-        dtype: int
-        info: "The stamp index to process."
-      drift_rate:
-        dtype: float
-        info: "Drift rate to apply in Hz/s."
-    outputs:
-      out_stamp_filepath:
-        dtype: File
-        info: "Path to the output dedrifted file."
-        required: true
-
   uvh5-to-ms:
     info: "Convert UVH5 files to Measurement Set format."
     flavour: python-code
@@ -159,11 +67,14 @@ cabs:
       name: python-astro
     command: |
       import os
+      import glob
       import numpy as np
       from astropy.io import fits
 
+      images = glob.glob(image_pattern)
+      
       if not images:
-          print("No images provided to stack!")
+          print(f"No images found matching pattern: {image_pattern}")
           exit(0)
 
       images = sorted(images)
@@ -197,10 +108,10 @@ cabs:
           os.remove(img)
 
     inputs:
-      images:
-        dtype: List[File]
-        info: "List of 2D target FITS channel slices"
-        required: false
+      image_pattern:
+        dtype: str
+        info: "Glob pattern of 2D target FITS channel slices"
+        required: true
       cube:
         dtype: str
         info: "Output path for the FITS cube"
@@ -298,28 +209,19 @@ image-voltage-data:
     base_name: =STRIPEXT(BASENAME(recipe.raw_filepath))
     stamp_index_val: =recipe.stamp-indices[recipe.raw_filepath@index]
     unique_name: '{recipe.base_name}_idx{recipe.stamp_index_val}'
-    out_dedrifted: '{recipe.outdir}/{recipe.unique_name}_dedrifted.stamps'
     out_uvh5:    '{recipe.outdir}/{recipe.unique_name}.uvh5'
     out_ms:      '{recipe.outdir}/{recipe.unique_name}.ms'
     img_prefix:  '{recipe.outdir}/{recipe.unique_name}'
 
   steps:
-    dedrift:
-      info: "Dedrift the initial stamp files."
-      cab: dedrift-stamps
-      params:
-        stamp_filepath: =recipe.raw_filepath
-        stamp_index: =recipe.stamp-indices[recipe.raw_filepath@index]
-        drift_rate: =recipe.drift-rates[recipe.raw_filepath@index]
-        out_stamp_filepath: =recipe.out_dedrifted
-
     correlate:
       info: "Correlate raw voltage data into visibilities using BLRI PyCorr."
       cab: blri_pycorr
       params:
-        input_filepaths: =recipe.out_dedrifted
-        stamp-index: 0 # Using 0 since the dedrift cab extracts our target into a new single-stamp file
+        input_filepaths: =recipe.raw_filepath
+        stamp-index: =recipe.stamp_index_val
         output-filepath: =recipe.out_uvh5
+        dedispersion: =recipe.drift-rates[recipe.raw_filepath@index]
 
     convert-uvh5-to-ms:
       info: "Convert the correlated visibilities from UVH5 to Measurement Set format."
@@ -349,22 +251,22 @@ image-voltage-data:
       info: "Stack restored 2D channel slices into 3D cube"
       cab: stack_freq_cube
       params:
-        images: =steps.imaging.restored.per-band
+        image_pattern: =recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-image.fits"
         cube: =recipe.img_prefix + "-image-cube.fits"
 
     stacking-dirty:
       info: "Stack dirty 2D channel slices into 3D cube"
       cab: stack_freq_cube
       params:
-        images: =steps.imaging.dirty.per-band
+        image_pattern: =recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-dirty.fits"
         cube: =recipe.img_prefix + "-dirty-cube.fits"
-
+    
     stacking-residual:
       info: "Stack residual 2D channel slices into 3D cube"
       cab: stack_freq_cube
       skip: =IF(LEN(GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-residual.fits"))==0, true, false)
       params:
-        images: =GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-residual.fits")
+        image_pattern: =recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-residual.fits"
         cube: =recipe.img_prefix + "-residual-cube.fits"
 
     stacking-psf:
@@ -372,7 +274,7 @@ image-voltage-data:
       cab: stack_freq_cube
       skip: =IF(LEN(GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-psf.fits"))==0, true, false)
       params:
-        images: =GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-psf.fits")
+        image_pattern: =recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-psf.fits"
         cube: =recipe.img_prefix + "-psf-cube.fits"
 
     stacking-model:
@@ -380,5 +282,5 @@ image-voltage-data:
       cab: stack_freq_cube
       skip: =IF(LEN(GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-model.fits"))==0, true, false)
       params:
-        images: =GLOB(recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-model.fits")
+        image_pattern: =recipe.img_prefix + "-[0-9][0-9][0-9][0-9]-model.fits"
         cube: =recipe.img_prefix + "-model-cube.fits"

@@ -221,7 +221,7 @@ image-voltage-data:
         input_filepaths: =recipe.raw_filepath
         stamp-index: =recipe.stamp_index_val
         output-filepath: =recipe.out_uvh5
-        dedispersion: =recipe.drift-rates[recipe.raw_filepath@index]
+        dedrift: =recipe.drift-rates[recipe.raw_filepath@index]
 
     convert-uvh5-to-ms:
       info: "Convert the correlated visibilities from UVH5 to Measurement Set format."
